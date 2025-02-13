@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -88,12 +89,33 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	procFilePath, err := processVideoForFastStart(tempVideo.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error preprocessing video", err)
+		return
+	}
+	defer os.Remove(procFilePath)
+
+	procVideo, err := os.Open(procFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to open procesed video", err)
+		return
+	}
+	defer procVideo.Close()
+
+	videoRatio, err := getVideoAspectRatio(procVideo.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to calculate video ratio", err)
+		return
+	}
+
 	videoKey := getAssetPath(mediaType)
+	videoKey = filepath.Join(videoRatio, videoKey)
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &videoKey,
-		Body:        tempVideo,
+		Body:        procVideo,
 		ContentType: &mediaType,
 	})
 	if err != nil {
